@@ -1,5 +1,5 @@
-name: smart_agent_app
-description: Smart AI Agent running on-device
+name: phi3_real_agent
+description: Phi-3 Real Agent
 version: 1.0.0+1
 
 environment:
@@ -19,11 +19,4 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/models/smart_vocab.json
-    - assets/models/model_stats.json
-    - assets/models/learned_patterns.json
-    - assets/models/small_agent_model.tflite
-    - assets/models/tokenizer.json
-
-dependencies:
-  permission_handler: ^11.0.0
+    - assets/models/
