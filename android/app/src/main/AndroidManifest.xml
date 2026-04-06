@@ -8,7 +8,7 @@
     <application
         android:label="Phi-3 Agent"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/ic_launcher"
         android:requestLegacyExternalStorage="true">
         
         <activity
