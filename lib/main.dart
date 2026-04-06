@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
+import 'settings_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -50,17 +51,39 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<Map<String, dynamic>> _messages = [];
   bool _isLoading = false;
 
+  @override
+  void initState() {
+    super.initState();
+    _loadMessages();
+  }
+
+  Future<void> _loadMessages() async {
+    final dir = await getApplicationDocumentsDirectory();
+    final db = await openDatabase('${dir.path}/agent.db');
+    final result = await db.query('messages', orderBy: 'id ASC');
+    setState(() {
+      _messages.clear();
+      for (var msg in result) {
+        _messages.add({
+          'isUser': msg['isUser'] == 1,
+          'content': msg['text'],
+          'time': DateTime.parse(msg['time']),
+        });
+      }
+    });
+    await db.close();
+  }
+
   Future<void> _sendMessage() async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
 
     setState(() {
-      _messages.add({'isUser': 1, 'content': text, 'time': DateTime.now()});
+      _messages.add({'isUser': true, 'content': text, 'time': DateTime.now()});
       _controller.clear();
       _isLoading = true;
     });
 
-    // حفظ في قاعدة البيانات
     final dir = await getApplicationDocumentsDirectory();
     final db = await openDatabase('${dir.path}/agent.db');
     await db.insert('messages', {
@@ -70,16 +93,14 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     await db.close();
 
-    // محاكاة الرد
     await Future.delayed(const Duration(milliseconds: 500));
     String response = _generateResponse(text);
 
     setState(() {
-      _messages.add({'isUser': 0, 'content': response, 'time': DateTime.now()});
+      _messages.add({'isUser': false, 'content': response, 'time': DateTime.now()});
       _isLoading = false;
     });
 
-    // حفظ الرد
     final db2 = await openDatabase('${dir.path}/agent.db');
     await db2.insert('messages', {
       'text': response,
@@ -92,7 +113,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String _generateResponse(String input) {
     final lower = input.toLowerCase();
     if (lower.contains('مرحبا') || lower.contains('السلام')) {
-      return 'مرحباً! 👋 أنا وكيل Phi-3. كيف أخدمك اليوم؟';
+      return 'مرحباً! 👋 أنا وكيل Phi-3. كيف أخدمك اليوم؟\n\nيمكنني:\n• 🧮 إجراء العمليات الحسابية\n• 📝 حفظ التذكيرات\n• 💾 تذكر المعلومات\n• ⚙️ إعدادات متقدمة';
     }
     if (lower.contains('كيف حالك')) {
       return 'أنا بخير، شكراً! 🧠 جاهز لمساعدتك.';
@@ -107,9 +128,14 @@ class _ChatScreenState extends State<ChatScreen> {
       return _calculate(input);
     }
     if (lower.contains('ذكرني')) {
-      return '✅ تم حفظ تذكرتك. سأذكرك لاحقاً!';
+      final reminder = input.replaceAll('ذكرني', '').trim();
+      return '✅ تم حفظ التذكير: "$reminder"\nسأذكرك في الوقت المناسب!';
     }
-    return '🤔 سؤال ذكي! أنا أعمل محلياً على هاتفك.\nكيف يمكنني مساعدتك بشكل أفضل؟';
+    if (lower.contains('تذكر') || lower.contains('احفظ')) {
+      final memory = input.replaceAll(RegExp(r'تذكر|احفظ'), '').trim();
+      return '💾 تم حفظ: "$memory"\nسأتذكر هذا دائماً!';
+    }
+    return '🤔 سؤال ذكي! أنا أعمل محلياً على هاتفك.\n\n📌 الأوامر المتاحة:\n• مرحبا\n• 5+3\n• ذكرني بأخذ دواء\n• تذكر أن لوني المفضل أزرق\n• ⚙️ اضغط على زر الإعدادات للأكثر';
   }
 
   String _calculate(String input) {
@@ -136,6 +162,18 @@ class _ChatScreenState extends State<ChatScreen> {
         title: const Text('🧠 Phi-3 Agent'),
         centerTitle: true,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
+              );
+            },
+            tooltip: 'الإعدادات',
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -145,7 +183,7 @@ class _ChatScreenState extends State<ChatScreen> {
               itemCount: _messages.length,
               itemBuilder: (context, index) {
                 final msg = _messages[index];
-                final isUser = msg['isUser'] == 1;
+                final isUser = msg['isUser'] as bool;
                 return Align(
                   alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
