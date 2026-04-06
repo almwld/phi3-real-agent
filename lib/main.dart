@@ -1,50 +1,45 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:speech_to_text/speech_to_text.dart';
-import 'package:share_plus/share_plus.dart';
-import 'smart_agent.dart';
-import 'model_path_manager.dart';
-import 'notification_service.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:path_provider/path_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService.init();
-  await SmartAgent().init();
+  await initDatabase();
   runApp(const MyApp());
 }
 
-class MyApp extends StatefulWidget {
-  const MyApp({super.key});
-
-  @override
-  State<MyApp> createState() => _MyAppState();
+Future<void> initDatabase() async {
+  final dir = await getApplicationDocumentsDirectory();
+  final db = await openDatabase('${dir.path}/agent.db', version: 1,
+      onCreate: (db, version) async {
+    await db.execute('''
+      CREATE TABLE messages(
+        id INTEGER PRIMARY KEY,
+        text TEXT,
+        isUser INTEGER,
+        time TEXT
+      )
+    ''');
+  });
+  await db.close();
 }
 
-class _MyAppState extends State<MyApp> {
-  ThemeMode _themeMode = ThemeMode.dark;
-
-  void toggleTheme() {
-    setState(() {
-      _themeMode = _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
-    });
-  }
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Phi-3 Smart Agent',
+      title: 'Phi-3 Agent',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.light().copyWith(primaryColor: Colors.deepPurple),
-      darkTheme: ThemeData.dark().copyWith(primaryColor: Colors.deepPurple),
-      themeMode: _themeMode,
-      home: ChatScreen(toggleTheme: toggleTheme),
+      theme: ThemeData.dark().copyWith(primaryColor: Colors.deepPurple),
+      home: const ChatScreen(),
     );
   }
 }
 
 class ChatScreen extends StatefulWidget {
-  final VoidCallback toggleTheme;
-  const ChatScreen({super.key, required this.toggleTheme});
+  const ChatScreen({super.key});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -53,167 +48,104 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final List<Map<String, dynamic>> _messages = [];
-  final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
-  String _modelStatus = 'جاري التحقق...';
-  final SpeechToText _speech = SpeechToText();
-  bool _isListening = false;
 
-  final List<String> quickSuggestions = [
-    'مرحبا',
-    'ما هو الذكاء الاصطناعي؟',
-    'احسب 15+27',
-    'ذكرني في 18:00 بأخذ دواء',
-    'ابحث في المحادثات عن مرحبا',
-    'احفظ الملخص',
-    'تصدير المحادثة'
-  ];
+  Future<void> _sendMessage() async {
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
 
-  @override
-  void initState() {
-    super.initState();
-    _checkModel();
-    _initSpeech();
-  }
-
-  Future<void> _initSpeech() async {
-    await _speech.initialize();
-  }
-
-  Future<void> _checkModel() async {
-    final info = await ModelPathManager.getModelInfo();
     setState(() {
-      if (info['status'] == 'found') {
-        _modelStatus = '✅ النموذج موجود (${info['size_mb']} MB)';
-      } else {
-        _modelStatus = '⚠️ ضع phi3_mini.tflite في /sdcard/Download/models/';
-      }
-    });
-  }
-
-  Future<void> _sendMessage(String text) async {
-    if (text.trim().isEmpty) return;
-    setState(() {
-      _messages.add({'isUser': true, 'content': text, 'time': DateTime.now()});
+      _messages.add({'isUser': 1, 'content': text, 'time': DateTime.now()});
+      _controller.clear();
       _isLoading = true;
     });
-    _scrollToBottom();
 
-    final agent = SmartAgent();
-    String response;
-    if (text == 'تصدير المحادثة') {
-      final path = await agent.exportChat();
-      response = '✅ تم تصدير المحادثة إلى: $path';
-      await Share.shareFiles([path], text: 'نسخة من محادثتي مع الوكيل الذكي');
-    } else {
-      response = await agent.respond(text);
-    }
+    // حفظ في قاعدة البيانات
+    final dir = await getApplicationDocumentsDirectory();
+    final db = await openDatabase('${dir.path}/agent.db');
+    await db.insert('messages', {
+      'text': text,
+      'isUser': 1,
+      'time': DateTime.now().toString()
+    });
+    await db.close();
+
+    // محاكاة الرد
+    await Future.delayed(const Duration(milliseconds: 500));
+    String response = _generateResponse(text);
 
     setState(() {
-      _messages.add({'isUser': false, 'content': response, 'time': DateTime.now()});
+      _messages.add({'isUser': 0, 'content': response, 'time': DateTime.now()});
       _isLoading = false;
     });
-    _scrollToBottom();
 
-    if (await agent.shouldSuggestSummary() && text != 'احفظ الملخص') {
-      Future.delayed(const Duration(milliseconds: 500), () {
-        setState(() {
-          _messages.add({
-            'isUser': false,
-            'content': '💡 **اقتراح ذكي**: لاحظت محادثة طويلة، اكتب "احفظ الملخص" لحفظ ملخصها.',
-            'time': DateTime.now(),
-            'isSuggestion': true,
-          });
-        });
-        _scrollToBottom();
-      });
-    }
-  }
-
-  void _startListening() async {
-    bool available = await _speech.initialize();
-    if (available) {
-      setState(() => _isListening = true);
-      _speech.listen(
-        onResult: (result) {
-          setState(() {
-            _controller.text = result.recognizedWords;
-            _isListening = false;
-          });
-          _sendMessage(_controller.text);
-          _controller.clear();
-        },
-      );
-    }
-  }
-
-  void _scrollToBottom() {
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
+    // حفظ الرد
+    final db2 = await openDatabase('${dir.path}/agent.db');
+    await db2.insert('messages', {
+      'text': response,
+      'isUser': 0,
+      'time': DateTime.now().toString()
     });
+    await db2.close();
+  }
+
+  String _generateResponse(String input) {
+    final lower = input.toLowerCase();
+    if (lower.contains('مرحبا') || lower.contains('السلام')) {
+      return 'مرحباً! 👋 أنا وكيل Phi-3. كيف أخدمك اليوم؟';
+    }
+    if (lower.contains('كيف حالك')) {
+      return 'أنا بخير، شكراً! 🧠 جاهز لمساعدتك.';
+    }
+    if (lower.contains('شكرا')) {
+      return 'العفو! 🤝 دائماً في خدمتك.';
+    }
+    if (lower.contains('وداعا')) {
+      return '👋 وداعاً! عد متى شئت.';
+    }
+    if (lower.contains('+') || lower.contains('-') || lower.contains('*') || lower.contains('/')) {
+      return _calculate(input);
+    }
+    if (lower.contains('ذكرني')) {
+      return '✅ تم حفظ تذكرتك. سأذكرك لاحقاً!';
+    }
+    return '🤔 سؤال ذكي! أنا أعمل محلياً على هاتفك.\nكيف يمكنني مساعدتك بشكل أفضل؟';
+  }
+
+  String _calculate(String input) {
+    try {
+      final numbers = RegExp(r'\d+').allMatches(input).map((m) => int.parse(m.group(0)!)).toList();
+      if (numbers.length < 2) return 'الرجاء كتابة عملية حسابية صحيحة';
+      if (input.contains('+')) return '🧮 ${numbers[0]} + ${numbers[1]} = ${numbers[0] + numbers[1]}';
+      if (input.contains('-')) return '🧮 ${numbers[0]} - ${numbers[1]} = ${numbers[0] - numbers[1]}';
+      if (input.contains('*')) return '🧮 ${numbers[0]} × ${numbers[1]} = ${numbers[0] * numbers[1]}';
+      if (input.contains('/')) {
+        if (numbers[1] == 0) return '⚠️ لا يمكن القسمة على صفر';
+        return '🧮 ${numbers[0]} ÷ ${numbers[1]} = ${numbers[0] / numbers[1]}';
+      }
+    } catch (e) {
+      return '❌ خطأ في العملية الحسابية';
+    }
+    return 'اكتب عملية حسابية مثل: 5+3';
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('🧠 Phi-3 Smart Agent'),
+        title: const Text('🧠 Phi-3 Agent'),
         centerTitle: true,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.brightness_6),
-            onPressed: widget.toggleTheme,
-            tooltip: 'تبديل المظهر',
-          ),
-          IconButton(
-            icon: Icon(Icons.share),
-            onPressed: () => _sendMessage('تصدير المحادثة'),
-            tooltip: 'تصدير المحادثة',
-          ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(30),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            alignment: Alignment.center,
-            child: Text(_modelStatus, style: const TextStyle(fontSize: 12)),
-          ),
-        ),
+        elevation: 0,
       ),
       body: Column(
         children: [
-          // الأزرار السريعة
-          Container(
-            height: 50,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: quickSuggestions.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemBuilder: (context, index) {
-                return ActionChip(
-                  label: Text(quickSuggestions[index]),
-                  onPressed: () => _sendMessage(quickSuggestions[index]),
-                  backgroundColor: Colors.deepPurple.shade100,
-                );
-              },
-            ),
-          ),
           Expanded(
             child: ListView.builder(
-              controller: _scrollController,
               padding: const EdgeInsets.all(12),
               itemCount: _messages.length,
               itemBuilder: (context, index) {
                 final msg = _messages[index];
-                final isUser = msg['isUser'] as bool;
-                final isSuggestion = msg['isSuggestion'] == true;
+                final isUser = msg['isUser'] == 1;
                 return Align(
                   alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
@@ -223,52 +155,60 @@ class _ChatScreenState extends State<ChatScreen> {
                       maxWidth: MediaQuery.of(context).size.width * 0.75,
                     ),
                     decoration: BoxDecoration(
-                      color: isUser
-                          ? Colors.deepPurple
-                          : (isSuggestion ? Colors.orange : Colors.grey.shade800),
+                      color: isUser ? Colors.deepPurple : Colors.grey.shade800,
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(msg['content'], style: const TextStyle(color: Colors.white)),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${(msg['time'] as DateTime).hour}:${(msg['time'] as DateTime).minute.toString().padLeft(2, '0')}',
-                          style: const TextStyle(fontSize: 10, color: Colors.white70),
-                        ),
-                      ],
+                    child: Text(
+                      msg['content'],
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
                     ),
                   ),
                 );
               },
             ),
           ),
-          if (_isLoading) const LinearProgressIndicator(),
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.all(8),
+              child: LinearProgressIndicator(),
+            ),
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: Theme.of(context).cardColor),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade900,
+              border: Border(top: BorderSide(color: Colors.grey.shade700)),
+            ),
             child: Row(
               children: [
-                IconButton(
-                  icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
-                  onPressed: _startListening,
-                  tooltip: 'إدخال صوتي',
-                ),
                 Expanded(
                   child: TextField(
                     controller: _controller,
-                    decoration: const InputDecoration(
-                      hintText: 'اكتب أو تحدث...',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(30))),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'اكتب رسالتك...',
+                      hintStyle: TextStyle(color: Colors.grey.shade500),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: BorderSide.none,
+                      ),
+                      filled: true,
+                      fillColor: Colors.grey.shade800,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                     ),
-                    onSubmitted: (t) => _sendMessage(t),
+                    onSubmitted: (_) => _sendMessage(),
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.send),
-                  onPressed: () => _sendMessage(_controller.text),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: _sendMessage,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: const BoxDecoration(
+                      color: Colors.deepPurple,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.send, color: Colors.white, size: 20),
+                  ),
                 ),
               ],
             ),
