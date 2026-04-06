@@ -130,7 +130,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     String response;
     if (widget.modelReady) {
-      response = await widget.modelEngine.generateResponse(text);
+      response = await widget.modelEngine.executeTask(text);
     } else {
       response = _fallbackResponse(text);
     }

@@ -1,3 +1,4 @@
+import task_executor.dart;
 import 'dart:io';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:path_provider/path_provider.dart';
@@ -97,4 +98,20 @@ class RealModelEngine {
   void dispose() {
     _interpreter?.close();
   }
+}
+
+// إضافة دالة لتنفيذ المهام
+Future<String> executeTask(String input) async {
+  final lower = input.toLowerCase();
+  
+  // كشف أوامر إنشاء الملفات والمهام
+  if (lower.contains('أنشئ') || lower.contains('إنشاء') || 
+      lower.contains('موقع') || lower.contains('ملف') ||
+      lower.contains('قائمة مهام') || lower.contains('تقرير') ||
+      lower.contains('حلل')) {
+    return await TaskExecutor.executeComplexTask(input);
+  }
+  
+  // إذا لم يكن أمر مهمة، استخدم النموذج للرد العادي
+  return await generateResponse(input);
 }
