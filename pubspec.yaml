@@ -24,3 +24,6 @@ flutter:
     - assets/models/learned_patterns.json
     - assets/models/small_agent_model.tflite
     - assets/models/tokenizer.json
+
+dependencies:
+  permission_handler: ^11.0.0
