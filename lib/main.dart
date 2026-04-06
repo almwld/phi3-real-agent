@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'smart_model_bridge.dart';
+import 'smart_agent.dart';
+import 'model_path_manager.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await SmartModelBridge().initialize();
+  await SmartAgent().init();
   runApp(const MyApp());
 }
 
@@ -14,12 +15,11 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '🧠 Smart Agent',
+      title: 'Phi-3 Smart Agent',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.deepPurple,
-        useMaterial3: true,
-        brightness: Brightness.dark,
+      theme: ThemeData.dark().copyWith(
+        primaryColor: Colors.deepPurple,
+        scaffoldBackgroundColor: Colors.black,
       ),
       home: const ChatScreen(),
     );
@@ -38,20 +38,28 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<Map<String, dynamic>> _messages = [];
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = false;
-  String _thinking = '';
+  String _modelStatus = 'جاري التحقق من النموذج...';
 
   @override
   void initState() {
     super.initState();
-    _addWelcomeMessage();
+    _checkModel();
+    _loadHistory();
   }
 
-  void _addWelcomeMessage() {
-    _messages.add({
-      'isUser': false,
-      'content': '🌟 مرحباً! أنا وكيلك الذكي.\n\nمتاح لدي:\n• 🧮 عمليات حسابية\n• 📝 تذكيرات\n• 💾 ذاكرة طويلة المدى\n• 🔍 تحليل عميق\n• 💬 محادثة ذكية\n\nكيف أخدمك اليوم؟',
-      'time': DateTime.now(),
+  Future<void> _checkModel() async {
+    final info = await ModelPathManager.getModelInfo();
+    setState(() {
+      if (info['status'] == 'found') {
+        _modelStatus = '✅ النموذج موجود (${info['size_mb']} MB)';
+      } else {
+        _modelStatus = '⚠️ النموذج غير موجود، ضع phi3_mini.tflite في /sdcard/Download/models/';
+      }
     });
+  }
+
+  Future<void> _loadHistory() async {
+    // هنا يمكن تحميل التاريخ من قاعدة البيانات إذا أردت عرضه عند بدء التشغيل
   }
 
   Future<void> _sendMessage() async {
@@ -62,19 +70,32 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.add({'isUser': true, 'content': text, 'time': DateTime.now()});
       _controller.clear();
       _isLoading = true;
-      _thinking = '🧠 جاري التحليل الذكي...';
     });
     _scrollToBottom();
 
-    final agent = SmartModelBridge();
-    final response = await agent.process(text);
+    final agent = SmartAgent();
+    final response = await agent.respond(text);
 
     setState(() {
       _messages.add({'isUser': false, 'content': response, 'time': DateTime.now()});
       _isLoading = false;
-      _thinking = '';
     });
     _scrollToBottom();
+
+    // اقتراح حفظ الملخص إذا لم يُقترح من قبل
+    if (await agent.shouldSuggestSummary()) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        setState(() {
+          _messages.add({
+            'isUser': false,
+            'content': '💡 **اقتراح ذكي**: لاحظت أن لدينا محادثة طويلة، هل تريد حفظ ملخصها؟ (اكتب "احفظ الملخص")',
+            'time': DateTime.now(),
+            'isSuggestion': true,
+          });
+        });
+        _scrollToBottom();
+      });
+    }
   }
 
   void _scrollToBottom() {
@@ -93,85 +114,57 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('🧠 Smart Agent', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('🧠 Phi-3 Smart Agent'),
         centerTitle: true,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () {
-              setState(() {
-                _messages.clear();
-                _addWelcomeMessage();
-              });
-            },
+        backgroundColor: Colors.deepPurple,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(30),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            alignment: Alignment.center,
+            child: Text(
+              _modelStatus,
+              style: const TextStyle(fontSize: 12, color: Colors.white70),
+            ),
           ),
-        ],
+        ),
       ),
       body: Column(
         children: [
-          if (_thinking.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.all(8),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.purple.shade50,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      _thinking,
-                      style: const TextStyle(fontSize: 12, color: Colors.purple),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(12),
               itemCount: _messages.length,
               itemBuilder: (context, index) {
                 final msg = _messages[index];
                 final isUser = msg['isUser'] as bool;
+                final isSuggestion = msg['isSuggestion'] == true;
                 return Align(
                   alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    padding: const EdgeInsets.all(14),
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(12),
                     constraints: BoxConstraints(
                       maxWidth: MediaQuery.of(context).size.width * 0.75,
                     ),
                     decoration: BoxDecoration(
-                      color: isUser ? Colors.deepPurple : Colors.grey.shade800,
-                      borderRadius: BorderRadius.circular(20),
+                      color: isUser
+                          ? Colors.deepPurple
+                          : (isSuggestion ? Colors.orange.shade800 : Colors.grey.shade800),
+                      borderRadius: BorderRadius.circular(16),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           msg['content'],
-                          style: TextStyle(
-                            color: isUser ? Colors.white : Colors.white70,
-                            fontSize: 15,
-                          ),
+                          style: const TextStyle(color: Colors.white, fontSize: 14),
                         ),
-                        const SizedBox(height: 6),
+                        const SizedBox(height: 4),
                         Text(
                           '${(msg['time'] as DateTime).hour}:${(msg['time'] as DateTime).minute.toString().padLeft(2, '0')}',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: isUser ? Colors.white60 : Colors.grey.shade500,
-                          ),
+                          style: const TextStyle(fontSize: 10, color: Colors.white60),
                         ),
                       ],
                     ),
@@ -189,7 +182,7 @@ class _ChatScreenState extends State<ChatScreen> {
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.grey.shade900,
-              border: Border(top: BorderSide(color: Colors.grey.shade800)),
+              border: Border(top: BorderSide(color: Colors.grey.shade700)),
             ),
             child: Row(
               children: [

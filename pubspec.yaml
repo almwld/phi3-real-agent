@@ -1,5 +1,5 @@
-name: phi3_real_agent
-description: Phi-3 Real Agent
+name: phi3_smart_agent
+description: Smart AI Agent with external model support
 version: 1.0.0+1
 
 environment:
