@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
 import 'settings_screen.dart';
+import 'real_model_engine.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,22 +26,46 @@ Future<void> initDatabase() async {
   await db.close();
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  final RealModelEngine _modelEngine = RealModelEngine();
+  bool _modelReady = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initModel();
+  }
+
+  Future<void> _initModel() async {
+    final loaded = await _modelEngine.loadModel();
+    setState(() {
+      _modelReady = loaded;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Phi-3 Agent',
+      title: 'Phi-3 Real Agent',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(primaryColor: Colors.deepPurple),
-      home: const ChatScreen(),
+      home: ChatScreen(modelEngine: _modelEngine, modelReady: _modelReady),
     );
   }
 }
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  final RealModelEngine modelEngine;
+  final bool modelReady;
+
+  const ChatScreen({super.key, required this.modelEngine, required this.modelReady});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -55,6 +80,17 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _loadMessages();
+    _addWelcomeMessage();
+  }
+
+  void _addWelcomeMessage() {
+    _messages.add({
+      'isUser': false,
+      'content': widget.modelReady 
+        ? '🧠 **Phi-3 Real Agent**\n\n✅ النموذج الحقيقي (91MB) يعمل!\n\nيمكنك التحدث معي بشكل طبيعي، سأستخدم الذكاء الاصطناعي للرد.\n\n**جرب:**\n• مرحبا\n• 5+3\n• ما هو الذكاء الاصطناعي؟'
+        : '⚠️ **النموذج غير متوفر**\n\nالرجاء وضع ملف phi3_mini.tflite (91MB) في مجلد Download/models/',
+      'time': DateTime.now(),
+    });
   }
 
   Future<void> _loadMessages() async {
@@ -62,7 +98,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final db = await openDatabase('${dir.path}/agent.db');
     final result = await db.query('messages', orderBy: 'id ASC');
     setState(() {
-      _messages.clear();
       for (var msg in result) {
         _messages.add({
           'isUser': msg['isUser'] == 1,
@@ -93,8 +128,12 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     await db.close();
 
-    await Future.delayed(const Duration(milliseconds: 500));
-    String response = _generateResponse(text);
+    String response;
+    if (widget.modelReady) {
+      response = await widget.modelEngine.generateResponse(text);
+    } else {
+      response = _fallbackResponse(text);
+    }
 
     setState(() {
       _messages.add({'isUser': false, 'content': response, 'time': DateTime.now()});
@@ -110,56 +149,32 @@ class _ChatScreenState extends State<ChatScreen> {
     await db2.close();
   }
 
-  String _generateResponse(String input) {
+  String _fallbackResponse(String input) {
     final lower = input.toLowerCase();
-    if (lower.contains('مرحبا') || lower.contains('السلام')) {
-      return 'مرحباً! 👋 أنا وكيل Phi-3. كيف أخدمك اليوم؟\n\nيمكنني:\n• 🧮 إجراء العمليات الحسابية\n• 📝 حفظ التذكيرات\n• 💾 تذكر المعلومات\n• ⚙️ إعدادات متقدمة';
-    }
-    if (lower.contains('كيف حالك')) {
-      return 'أنا بخير، شكراً! 🧠 جاهز لمساعدتك.';
-    }
-    if (lower.contains('شكرا')) {
-      return 'العفو! 🤝 دائماً في خدمتك.';
-    }
-    if (lower.contains('وداعا')) {
-      return '👋 وداعاً! عد متى شئت.';
-    }
-    if (lower.contains('+') || lower.contains('-') || lower.contains('*') || lower.contains('/')) {
-      return _calculate(input);
-    }
-    if (lower.contains('ذكرني')) {
-      final reminder = input.replaceAll('ذكرني', '').trim();
-      return '✅ تم حفظ التذكير: "$reminder"\nسأذكرك في الوقت المناسب!';
-    }
-    if (lower.contains('تذكر') || lower.contains('احفظ')) {
-      final memory = input.replaceAll(RegExp(r'تذكر|احفظ'), '').trim();
-      return '💾 تم حفظ: "$memory"\nسأتذكر هذا دائماً!';
-    }
-    return '🤔 سؤال ذكي! أنا أعمل محلياً على هاتفك.\n\n📌 الأوامر المتاحة:\n• مرحبا\n• 5+3\n• ذكرني بأخذ دواء\n• تذكر أن لوني المفضل أزرق\n• ⚙️ اضغط على زر الإعدادات للأكثر';
+    if (lower.contains('مرحبا')) return 'مرحباً! 👋';
+    if (lower.contains('كيف حالك')) return 'أنا بخير، شكراً!';
+    if (lower.contains('شكرا')) return 'العفو! 🤝';
+    if (lower.contains('وداعا')) return '👋 وداعاً!';
+    if (lower.contains('+')) return _calculate(input);
+    return '⚠️ النموذج غير متوفر. الرجاء وضع ملف phi3_mini.tflite في Download/models/';
   }
 
   String _calculate(String input) {
     try {
       final numbers = RegExp(r'\d+').allMatches(input).map((m) => int.parse(m.group(0)!)).toList();
-      if (numbers.length < 2) return 'الرجاء كتابة عملية حسابية صحيحة';
-      if (input.contains('+')) return '🧮 ${numbers[0]} + ${numbers[1]} = ${numbers[0] + numbers[1]}';
-      if (input.contains('-')) return '🧮 ${numbers[0]} - ${numbers[1]} = ${numbers[0] - numbers[1]}';
-      if (input.contains('*')) return '🧮 ${numbers[0]} × ${numbers[1]} = ${numbers[0] * numbers[1]}';
-      if (input.contains('/')) {
-        if (numbers[1] == 0) return '⚠️ لا يمكن القسمة على صفر';
-        return '🧮 ${numbers[0]} ÷ ${numbers[1]} = ${numbers[0] / numbers[1]}';
-      }
-    } catch (e) {
-      return '❌ خطأ في العملية الحسابية';
-    }
-    return 'اكتب عملية حسابية مثل: 5+3';
+      if (numbers.length < 2) return 'اكتب عملية صحيحة';
+      if (input.contains('+')) return '${numbers[0]} + ${numbers[1]} = ${numbers[0] + numbers[1]}';
+      if (input.contains('-')) return '${numbers[0]} - ${numbers[1]} = ${numbers[0] - numbers[1]}';
+      if (input.contains('*')) return '${numbers[0]} × ${numbers[1]} = ${numbers[0] * numbers[1]}';
+    } catch (e) {}
+    return 'خطأ في الحساب';
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('🧠 Phi-3 Agent'),
+        title: const Text('🧠 Phi-3 Real Agent'),
         centerTitle: true,
         elevation: 0,
         actions: [
@@ -174,6 +189,19 @@ class _ChatScreenState extends State<ChatScreen> {
             tooltip: 'الإعدادات',
           ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(30),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            alignment: Alignment.center,
+            child: Text(
+              widget.modelReady 
+                ? '✅ النموذج الحقيقي يعمل | 91.45 MB' 
+                : '⚠️ النموذج غير موجود',
+              style: const TextStyle(fontSize: 11, color: Colors.white70),
+            ),
+          ),
+        ),
       ),
       body: Column(
         children: [
@@ -223,7 +251,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     controller: _controller,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      hintText: 'اكتب رسالتك...',
+                      hintText: widget.modelReady ? 'تحدث مع Phi-3...' : 'النموذج غير متوفر',
                       hintStyle: TextStyle(color: Colors.grey.shade500),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(24),
