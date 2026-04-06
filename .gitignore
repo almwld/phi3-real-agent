@@ -1,0 +1,19 @@
+# Large model files (will be downloaded separately)
+*.tflite
+*.gguf
+*.onnx
+*.bin
+*.pt
+*.pth
+
+# Flutter/Dart
+.dart_tool/
+.packages
+pubspec.lock
+build/
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.iml
